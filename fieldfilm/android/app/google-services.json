@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "157938247391",
+    "project_id": "fieldfilm-374df",
+    "storage_bucket": "fieldfilm-374df.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:157938247391:android:5c9ddaabd240958a6bab6a",
+        "android_client_info": {
+          "package_name": "com.example.fieldfilm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAGZQbvWUEf7_80V4tC6fd1U-SmapP_D-s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
