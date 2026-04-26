@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'signup_page.dart'; // 引入我们接下来要建的注册页
+import 'signup_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -14,7 +14,7 @@ class _LoginPageState extends State<LoginPage> {
   final _pwdCtrl = TextEditingController();
   bool _isLoading = false;
 
-  // --- 专业的通用报错弹窗 ---
+  // Error handle
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -33,7 +33,7 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // --- 登录逻辑 ---
+  // --- Login Logic ---
   Future<void> _login() async {
     setState(() => _isLoading = true);
     try {
@@ -42,9 +42,8 @@ class _LoginPageState extends State<LoginPage> {
         password: _pwdCtrl.text.trim(),
       );
       print("[Auth] Login success");
-      // 登录成功后会自动被 main.dart 里的 StreamBuilder 捕捉并切换到主页
     } on FirebaseAuthException catch (e) {
-      // 捕捉 Firebase 专属错误，提取更干净的错误信息
+      // Catch error code and show user-friendly message
       print("[Auth] Login failed: ${e.code}");
       String errorMsg = "Please check your email and password.";
       if (e.code == 'invalid-email') errorMsg = "The email format is incorrect.";
@@ -67,7 +66,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("FieldFilm Portal")),
+      appBar: AppBar(title: const Text("FieldFilm")),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
@@ -79,7 +78,6 @@ class _LoginPageState extends State<LoginPage> {
               controller: _emailCtrl,
               decoration: InputDecoration(
                 labelText: "Email",
-                // 圆角矩形输入框
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)), 
               ),
             ),
@@ -99,7 +97,7 @@ class _LoginPageState extends State<LoginPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     OutlinedButton(
-                      // 跳转到专属注册页
+                      // Register page navigation
                       onPressed: () {
                         Navigator.push(
                           context,

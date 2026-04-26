@@ -33,7 +33,7 @@ class _SignupPageState extends State<SignupPage> {
   }
 
   Future<void> _register() async {
-    // 检查两次密码是否一致
+    // Double check password
     if (_pwdCtrl.text != _pwdConfirmCtrl.text) {
       _showErrorDialog("Validation Error", "The passwords do not match. Please try again.");
       return;
@@ -51,7 +51,6 @@ class _SignupPageState extends State<SignupPage> {
         password: _pwdCtrl.text.trim(),
       );
       print("[Auth] Register success");
-      // Firebase 注册成功后会自动登录，所以我们直接把注册页面关掉，退回上一层即可
       if (mounted) {
         Navigator.pop(context);
       }
@@ -77,7 +76,7 @@ class _SignupPageState extends State<SignupPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Join FieldFilm")),
-      body: SingleChildScrollView( // 防止键盘挡住输入框
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

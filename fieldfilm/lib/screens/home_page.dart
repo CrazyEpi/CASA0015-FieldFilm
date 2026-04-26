@@ -1,15 +1,12 @@
 import 'dart:io';
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
+
+import '../services/location_service.dart';
+import '../services/database_service.dart';
 
 class FieldFilmHomePage extends StatefulWidget {
   const FieldFilmHomePage({super.key});
@@ -26,6 +23,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
 
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
+  final DatabaseService _dbService = DatabaseService(); 
   
   final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
 
@@ -38,13 +36,11 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     'Fujifilm Provia 100F'
   ];
 
-  final String _weatherApiKey = "f23185a78cfc495dd19bfe6d582a0fcb"; 
-
   // --- Lifecycle ---
   @override
   void initState() {
     super.initState();
-    _fetchCloudData();
+    _loadData();
   }
 
   @override
@@ -53,7 +49,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     super.dispose();
   }
 
-  // --- Helper ---
+  // --- Utility ---
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -72,42 +68,27 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // --- Firebase Integration ---
-  Future<void> _fetchCloudData() async {
+  // --- Core Logic ---
+
+  // Initializes local state with remote database records.
+  Future<void> _loadData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('rolls')
-          .where('userId', isEqualTo: user.uid)
-          .get();
-
-      List<Map<String, dynamic>> cloudRolls = [];
-      for (var doc in snapshot.docs) {
-        var data = doc.data();
-        data['id'] = doc.id;
-        data['coverPath'] = data.containsKey('coverPath') ? data['coverPath'] : null;
-        data['audioPath'] = data.containsKey('audioPath') ? data['audioPath'] : null;
-        data['isRecording'] = false; 
-        cloudRolls.add(data);
-      }
-
-      cloudRolls.sort((a, b) => b['time'].compareTo(a['time']));
-
+      final data = await _dbService.fetchUserRolls(user.uid);
       setState(() {
-        _rolls = cloudRolls;
+        _rolls = data;
         _isLoadingData = false;
       });
-      print("Fetched ${cloudRolls.length} items from cloud");
     } catch (e) {
-      print("Fetch error: $e");
-      _showErrorDialog("Data Sync Error", "Failed to load your logs: $e");
+      print("[Database] Fetch error: $e");
+      _showErrorDialog("Data Sync Error", "Failed to load logs: $e");
       setState(() => _isLoadingData = false);
     }
   }
 
-  // --- Hardware Sensor & Data Capture ---
+  // Captures environment context and generates a new roll entry.
   Future<void> _createNewRoll() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -115,40 +96,16 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     setState(() => _isCapturing = true);
 
     try {
-      Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-
-      String addressStr = "Unknown Area";
-      try {
-        List<Placemark> placemarks = await placemarkFromCoordinates(
-            position.latitude, position.longitude);
-        if (placemarks.isNotEmpty) {
-          addressStr = '${placemarks.first.locality ?? "City"}, ${placemarks.first.subLocality ?? "Area"}';
-        }
-      } catch (e) { 
-        print("Geocoding error: $e"); 
-      }
-
-      String weatherInfo = "Weather unavailable";
-      try {
-        final url = 'https://api.openweathermap.org/data/2.5/weather?lat=${position.latitude}&lon=${position.longitude}&appid=$_weatherApiKey&units=metric';
-        final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) {
-          final weatherData = jsonDecode(res.body);
-          weatherInfo = '${weatherData['weather'][0]['main']}, ${weatherData['main']['temp']}°C';
-        }
-      } catch (e) { 
-        print("Weather API error: $e"); 
-      }
-
+      final envData = await LocationService.getEnvironmentData();
       final rollId = DateTime.now().millisecondsSinceEpoch.toString();
+      
       final newRoll = {
         'id': rollId,
         'time': DateTime.now().toString().substring(0, 16),
-        'location': '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
-        'address': addressStr,
-        'alt': '${position.altitude.toStringAsFixed(1)}m',
-        'weather': weatherInfo,
+        'location': envData['location'],
+        'address': envData['address'],
+        'alt': envData['alt'],
+        'weather': envData['weather'],
         'filmType': _filmTypes[0],
         'userId': user.uid,
         'coverPath': null, 
@@ -156,33 +113,23 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         'isRecording': false,
       };
 
+      // Update local state
       _rolls.insert(0, newRoll);
       _listKey.currentState?.insertItem(0, duration: const Duration(milliseconds: 500));
       setState(() => _isCapturing = false);
       
-      print("New roll created: $rollId");
-
-      FirebaseFirestore.instance.collection('rolls').doc(rollId).set({
-        'time': newRoll['time'],
-        'location': newRoll['location'],
-        'address': newRoll['address'],
-        'alt': newRoll['alt'],
-        'weather': newRoll['weather'],
-        'filmType': newRoll['filmType'],
-        'userId': user.uid,
-        'coverPath': null, 
-        'audioPath': null, 
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // Persist to database
+      await _dbService.createRoll(rollId, newRoll);
+      print("[RollCreation] Success: $rollId");
 
     } catch (e) {
-      print("Data capture error: $e");
-      _showErrorDialog("Sensor Error", "Failed to capture data. Check permissions.");
+      print("[RollCreation] Sensor error: $e");
+      _showErrorDialog("Sensor Error", e.toString());
       setState(() => _isCapturing = false);
     }
   }
 
-  // --- Data Management ---
+  // Handles confirmation and cascading deletion of a roll.
   Future<void> _confirmDeleteRoll(int index) async {
     bool confirm = await showDialog(
       context: context,
@@ -215,23 +162,23 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         duration: const Duration(milliseconds: 300),
       );
 
-      FirebaseFirestore.instance.collection('rolls').doc(rollId).delete();
+      _dbService.deleteRoll(rollId);
     }
   }
 
-  // --- Media Handling ---
+  // Media update handlers
   Future<void> _setRollCover(int index) async {
     final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
     if (photo != null) {
       setState(() => _rolls[index]['coverPath'] = photo.path);
-      FirebaseFirestore.instance.collection('rolls').doc(_rolls[index]['id']).update({'coverPath': photo.path});
+      _dbService.updateRollField(_rolls[index]['id'], 'coverPath', photo.path);
     }
   }
 
   void _updateFilmType(int index, String? newType) {
     if (newType != null) {
       setState(() => _rolls[index]['filmType'] = newType);
-      FirebaseFirestore.instance.collection('rolls').doc(_rolls[index]['id']).update({'filmType': newType});
+      _dbService.updateRollField(_rolls[index]['id'], 'filmType', newType);
     }
   }
 
@@ -244,13 +191,15 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         _rolls[index]['isRecording'] = false;
         _rolls[index]['audioPath'] = path;
       });
-      FirebaseFirestore.instance.collection('rolls').doc(roll['id']).update({'audioPath': path});
+      _dbService.updateRollField(roll['id'], 'audioPath', path);
     } else {
       if (await _audioRecorder.hasPermission()) {
         final dir = await getApplicationDocumentsDirectory();
         final path = '${dir.path}/memo_${roll['id']}.m4a';
         await _audioRecorder.start(const RecordConfig(), path: path);
         setState(() => _rolls[index]['isRecording'] = true);
+      } else {
+        print("[AudioRecorder] Permission denied.");
       }
     }
   }
@@ -260,13 +209,13 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       _rolls[index]['audioPath'] = null;
       _rolls[index]['isRecording'] = false;
     });
-    FirebaseFirestore.instance.collection('rolls').doc(_rolls[index]['id']).update({'audioPath': null});
+    _dbService.updateRollField(_rolls[index]['id'], 'audioPath', null);
   }
 
-  // --- UI Builder ---
+  // --- UI ---
   @override
   Widget build(BuildContext context) {
-    // Blocking load screen
+    // Initial loading state
     if (_isLoadingData) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator(color: Colors.deepOrange)),
@@ -274,7 +223,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     }
 
     return Scaffold(
-      // Top Navigation
+      // Global navigation
       appBar: AppBar(
         title: const Text('FieldFilm', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
@@ -282,13 +231,11 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () {
-              FirebaseAuth.instance.signOut();
-            },
+            onPressed: () => FirebaseAuth.instance.signOut(),
           )
         ],
       ),
-      // Main Feed
+      // Main list feed
       body: _rolls.isEmpty
           ? const Center(child: Text("Tap capture to log your first frame", style: TextStyle(color: Colors.white54)))
           : AnimatedList(
@@ -298,7 +245,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
                 return _buildAnimatedItem(context, _rolls[index], index, animation);
               },
             ),
-      // Global Action Footer
+      // Action footer
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12.0),
@@ -327,7 +274,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
 
   // --- UI Sub-components ---
 
-  // Film Roll Wrapper
+  // Wrapper for individual roll entries
   Widget _buildAnimatedItem(BuildContext context, Map<String, dynamic> roll, int index, Animation<double> animation) {
     return SizeTransition(
       sizeFactor: animation,
@@ -341,7 +288,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
             children: [
               _buildSprocketRow(),
               Expanded(
-                // Horizontal Swipe View
+                // Horizontal scrolling container
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
@@ -359,7 +306,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // Decorative Top/Bottom Perforations
+  // Decorative film perforations
   Widget _buildSprocketRow() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
@@ -377,12 +324,12 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // Left Page: Photo Square & Stock Selector
+  // Left panel: Photo and film stock
   Widget _buildCoverPage(Map<String, dynamic> roll, int index) {
     bool imgExists = roll['coverPath'] != null && File(roll['coverPath']).existsSync();
 
     return Container(
-      width: 180, 
+      width: 160, 
       margin: const EdgeInsets.only(left: 12, right: 8),      
       decoration: BoxDecoration(
         color: const Color(0xFF252525),
@@ -391,7 +338,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       ),
       child: Column(
         children: [
-          // Photo Frame
           Expanded(
             child: GestureDetector(
               onTap: () => _setRollCover(index),
@@ -423,7 +369,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
               ),
             ),
           ),
-          // Film Stock Dropdown
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
             decoration: const BoxDecoration(
@@ -456,7 +401,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // Right Page: Time, Location, Weather, & Audio Controls
+  // Right panel: Context and audio memo
   Widget _buildMetadataPage(Map<String, dynamic> roll, int index, BuildContext context) {
     bool isRec = roll['isRecording'];
     bool hasAudio = roll['audioPath'] != null && File(roll['audioPath']).existsSync();
@@ -473,7 +418,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header: Timestamp & Delete Action
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -491,8 +435,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
             ],
           ),
           const Divider(color: Colors.white24, height: 12),
-          
-          // Body: Environmental Context
           Row(
             children: [
               const Icon(Icons.map, size: 14, color: Colors.white70),
@@ -532,8 +474,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
             ],
           ),
           const Spacer(),
-
-          // Footer: Voice Memo Recorder
           Container(
             margin: const EdgeInsets.only(top: 8),
             padding: const EdgeInsets.all(8),
