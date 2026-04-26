@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -8,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
 class FieldFilmHomePage extends StatefulWidget {
   const FieldFilmHomePage({super.key});
@@ -24,7 +26,8 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
 
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
-  final PageController _pageController = PageController(viewportFraction: 0.80);
+  
+  final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
 
   final List<String> _filmTypes = [
     'Kodak Portra 400',
@@ -35,6 +38,8 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     'Fujifilm Provia 100F'
   ];
 
+  final String _weatherApiKey = "f23185a78cfc495dd19bfe6d582a0fcb"; 
+
   // --- Lifecycle ---
   @override
   void initState() {
@@ -44,9 +49,27 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
 
   @override
   void dispose() {
-    _pageController.dispose();
     _audioRecorder.dispose();
     super.dispose();
+  }
+
+  // --- Helper ---
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: Colors.grey[900],
+        title: Text(title, style: const TextStyle(color: Colors.redAccent)),
+        content: Text(message, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text("Got it", style: TextStyle(color: Colors.deepOrange)),
+          ),
+        ],
+      ),
+    );
   }
 
   // --- Firebase Integration ---
@@ -58,26 +81,28 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       final snapshot = await FirebaseFirestore.instance
           .collection('rolls')
           .where('userId', isEqualTo: user.uid)
-          .orderBy('createdAt', descending: true)
           .get();
 
       List<Map<String, dynamic>> cloudRolls = [];
       for (var doc in snapshot.docs) {
         var data = doc.data();
         data['id'] = doc.id;
-        data['coverPath'] = null;
-        data['audioPath'] = null;
-        data['isRecording'] = false;
+        data['coverPath'] = data.containsKey('coverPath') ? data['coverPath'] : null;
+        data['audioPath'] = data.containsKey('audioPath') ? data['audioPath'] : null;
+        data['isRecording'] = false; 
         cloudRolls.add(data);
       }
+
+      cloudRolls.sort((a, b) => b['time'].compareTo(a['time']));
 
       setState(() {
         _rolls = cloudRolls;
         _isLoadingData = false;
       });
-      print("Cloud sync complete: ${cloudRolls.length} items");
+      print("Fetched ${cloudRolls.length} items from cloud");
     } catch (e) {
-      print("Cloud fetch error: $e");
+      print("Fetch error: $e");
+      _showErrorDialog("Data Sync Error", "Failed to load your logs: $e");
       setState(() => _isLoadingData = false);
     }
   }
@@ -98,11 +123,22 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         List<Placemark> placemarks = await placemarkFromCoordinates(
             position.latitude, position.longitude);
         if (placemarks.isNotEmpty) {
-          Placemark place = placemarks.first;
-          addressStr = '${place.locality ?? "City"}, ${place.subLocality ?? place.street ?? "Area"}';
+          addressStr = '${placemarks.first.locality ?? "City"}, ${placemarks.first.subLocality ?? "Area"}';
         }
-      } catch (e) {
-        print("Geocoding error: $e");
+      } catch (e) { 
+        print("Geocoding error: $e"); 
+      }
+
+      String weatherInfo = "Weather unavailable";
+      try {
+        final url = 'https://api.openweathermap.org/data/2.5/weather?lat=${position.latitude}&lon=${position.longitude}&appid=$_weatherApiKey&units=metric';
+        final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          final weatherData = jsonDecode(res.body);
+          weatherInfo = '${weatherData['weather'][0]['main']}, ${weatherData['main']['temp']}°C';
+        }
+      } catch (e) { 
+        print("Weather API error: $e"); 
       }
 
       final rollId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -112,17 +148,17 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         'location': '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
         'address': addressStr,
         'alt': '${position.altitude.toStringAsFixed(1)}m',
+        'weather': weatherInfo,
         'filmType': _filmTypes[0],
         'userId': user.uid,
-        'coverPath': null,
-        'audioPath': null,
+        'coverPath': null, 
+        'audioPath': null, 
         'isRecording': false,
       };
 
-      setState(() {
-        _rolls.insert(0, newRoll);
-        _isCapturing = false;
-      });
+      _rolls.insert(0, newRoll);
+      _listKey.currentState?.insertItem(0, duration: const Duration(milliseconds: 500));
+      setState(() => _isCapturing = false);
       
       print("New roll created: $rollId");
 
@@ -131,12 +167,17 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         'location': newRoll['location'],
         'address': newRoll['address'],
         'alt': newRoll['alt'],
+        'weather': newRoll['weather'],
         'filmType': newRoll['filmType'],
         'userId': user.uid,
+        'coverPath': null, 
+        'audioPath': null, 
         'createdAt': FieldValue.serverTimestamp(),
       });
+
     } catch (e) {
       print("Data capture error: $e");
+      _showErrorDialog("Sensor Error", "Failed to capture data. Check permissions.");
       setState(() => _isCapturing = false);
     }
   }
@@ -147,8 +188,9 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.grey[900],
-        title: const Text("Delete Memo?"),
-        content: const Text("This roll will be permanently removed from your logbook."),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("Delete Memo?", style: TextStyle(color: Colors.white)),
+        content: const Text("This roll will be permanently removed.", style: TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -163,17 +205,18 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     ) ?? false;
 
     if (confirm) {
-      _deleteRoll(index);
-    }
-  }
+      String rollId = _rolls[index]['id'];
+      final removedRoll = _rolls[index];
+      
+      _rolls.removeAt(index);
+      _listKey.currentState?.removeItem(
+        index,
+        (context, animation) => _buildAnimatedItem(context, removedRoll, index, animation),
+        duration: const Duration(milliseconds: 300),
+      );
 
-  void _deleteRoll(int index) {
-    String rollId = _rolls[index]['id'];
-    setState(() => _rolls.removeAt(index));
-    
-    FirebaseFirestore.instance.collection('rolls').doc(rollId).delete().catchError((e) {
-      print("Delete error: $e");
-    });
+      FirebaseFirestore.instance.collection('rolls').doc(rollId).delete();
+    }
   }
 
   // --- Media Handling ---
@@ -181,17 +224,14 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
     if (photo != null) {
       setState(() => _rolls[index]['coverPath'] = photo.path);
+      FirebaseFirestore.instance.collection('rolls').doc(_rolls[index]['id']).update({'coverPath': photo.path});
     }
   }
 
   void _updateFilmType(int index, String? newType) {
     if (newType != null) {
       setState(() => _rolls[index]['filmType'] = newType);
-      
-      FirebaseFirestore.instance
-          .collection('rolls')
-          .doc(_rolls[index]['id'])
-          .update({'filmType': newType});
+      FirebaseFirestore.instance.collection('rolls').doc(_rolls[index]['id']).update({'filmType': newType});
     }
   }
 
@@ -204,14 +244,13 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         _rolls[index]['isRecording'] = false;
         _rolls[index]['audioPath'] = path;
       });
+      FirebaseFirestore.instance.collection('rolls').doc(roll['id']).update({'audioPath': path});
     } else {
       if (await _audioRecorder.hasPermission()) {
         final dir = await getApplicationDocumentsDirectory();
         final path = '${dir.path}/memo_${roll['id']}.m4a';
         await _audioRecorder.start(const RecordConfig(), path: path);
         setState(() => _rolls[index]['isRecording'] = true);
-      } else {
-        print("Microphone permission denied");
       }
     }
   }
@@ -221,11 +260,13 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       _rolls[index]['audioPath'] = null;
       _rolls[index]['isRecording'] = false;
     });
+    FirebaseFirestore.instance.collection('rolls').doc(_rolls[index]['id']).update({'audioPath': null});
   }
 
   // --- UI Builder ---
   @override
   Widget build(BuildContext context) {
+    // Blocking load screen
     if (_isLoadingData) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator(color: Colors.deepOrange)),
@@ -233,6 +274,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     }
 
     return Scaffold(
+      // Top Navigation
       appBar: AppBar(
         title: const Text('FieldFilm', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
@@ -240,41 +282,23 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () => FirebaseAuth.instance.signOut(),
+            onPressed: () {
+              FirebaseAuth.instance.signOut();
+            },
           )
         ],
       ),
+      // Main Feed
       body: _rolls.isEmpty
           ? const Center(child: Text("Tap capture to log your first frame", style: TextStyle(color: Colors.white54)))
-          : ListView.builder(
-              itemCount: _rolls.length,
-              itemBuilder: (context, index) {
-                final roll = _rolls[index];
-
-                return Container(
-                  height: 320, 
-                  margin: const EdgeInsets.only(bottom: 24),
-                  decoration: const BoxDecoration(color: Color(0xFF1C1C1C)),
-                  child: Column(
-                    children: [
-                      _buildSprocketRow(),
-                      Expanded(
-                        child: PageView(
-                          controller: _pageController,
-                          physics: const BouncingScrollPhysics(),
-                          pageSnapping: true,
-                          children: [
-                            _buildCoverPage(roll, index),
-                            _buildMetadataPage(roll, index),
-                          ],
-                        ),
-                      ),
-                      _buildSprocketRow(),
-                    ],
-                  ),
-                );
+          : AnimatedList(
+              key: _listKey,
+              initialItemCount: _rolls.length,
+              itemBuilder: (context, index, animation) {
+                return _buildAnimatedItem(context, _rolls[index], index, animation);
               },
             ),
+      // Global Action Footer
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12.0),
@@ -291,7 +315,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                   : const Icon(Icons.camera, size: 24, color: Colors.white),
               label: Text(
-                _isCapturing ? 'Sensing...' : 'Capture Roll',
+                _isCapturing ? 'Sensing Environment...' : 'Capture Roll',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)
               ),
             ),
@@ -301,7 +325,41 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // --- Sub-components ---
+  // --- UI Sub-components ---
+
+  // Film Roll Wrapper
+  Widget _buildAnimatedItem(BuildContext context, Map<String, dynamic> roll, int index, Animation<double> animation) {
+    return SizeTransition(
+      sizeFactor: animation,
+      child: FadeTransition(
+        opacity: animation,
+        child: Container(
+          height: 200,
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: const BoxDecoration(color: Color(0xFF1C1C1C)),
+          child: Column(
+            children: [
+              _buildSprocketRow(),
+              Expanded(
+                // Horizontal Swipe View
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  children: [
+                    _buildCoverPage(roll, index),
+                    _buildMetadataPage(roll, index, context),
+                  ],
+                ),
+              ),
+              _buildSprocketRow(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Decorative Top/Bottom Perforations
   Widget _buildSprocketRow() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
@@ -319,9 +377,13 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
+  // Left Page: Photo Square & Stock Selector
   Widget _buildCoverPage(Map<String, dynamic> roll, int index) {
+    bool imgExists = roll['coverPath'] != null && File(roll['coverPath']).existsSync();
+
     return Container(
-      margin: const EdgeInsets.only(left: 10, right: 10),
+      width: 180, 
+      margin: const EdgeInsets.only(left: 12, right: 8),      
       decoration: BoxDecoration(
         color: const Color(0xFF252525),
         borderRadius: BorderRadius.circular(8),
@@ -329,31 +391,39 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       ),
       child: Column(
         children: [
+          // Photo Frame
           Expanded(
             child: GestureDetector(
               onTap: () => _setRollCover(index),
               child: Container(
                 width: double.infinity,
                 decoration: const BoxDecoration(
-                  color: Colors.black26,
+                  color: Colors.black, 
                   borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
                 ),
-                child: roll['coverPath'] == null
-                    ? Column(
+                child: imgExists
+                    ? ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                        child: Transform.scale(
+                          scale: 1.15, 
+                          child: Image.file(
+                            File(roll['coverPath']), 
+                            fit: BoxFit.contain, 
+                          ),
+                        ),
+                      )
+                    : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: const [
                           Icon(Icons.add_a_photo, size: 36, color: Colors.white54),
                           SizedBox(height: 6),
-                          Text("Tap for cover", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                          Text("Tap to add photo", style: TextStyle(color: Colors.white54, fontSize: 12)),
                         ],
-                      )
-                    : ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                        child: Image.file(File(roll['coverPath']), fit: BoxFit.cover),
                       ),
               ),
             ),
           ),
+          // Film Stock Dropdown
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
             decoration: const BoxDecoration(
@@ -386,13 +456,15 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  Widget _buildMetadataPage(Map<String, dynamic> roll, int index) {
+  // Right Page: Time, Location, Weather, & Audio Controls
+  Widget _buildMetadataPage(Map<String, dynamic> roll, int index, BuildContext context) {
     bool isRec = roll['isRecording'];
-    bool hasAudio = roll['audioPath'] != null;
+    bool hasAudio = roll['audioPath'] != null && File(roll['audioPath']).existsSync();
 
     return Container(
-      margin: const EdgeInsets.only(right: 10),
-      padding: const EdgeInsets.all(12),
+      width: MediaQuery.of(context).size.width * 0.75, 
+      margin: const EdgeInsets.only(left: 8, right: 12),      
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: const Color(0xFF252525),
         borderRadius: BorderRadius.circular(8),
@@ -401,19 +473,26 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header: Timestamp & Delete Action
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(roll['time'], style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange, fontSize: 13)),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.white54, size: 18),
-                onPressed: () => _confirmDeleteRoll(index),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+              SizedBox(
+                height: 20, 
+                width: 20,
+                child: IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.white54, size: 16),
+                  onPressed: () => _confirmDeleteRoll(index),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
               ),
             ],
           ),
-          const Divider(color: Colors.white24, height: 16),
+          const Divider(color: Colors.white24, height: 12),
+          
+          // Body: Environmental Context
           Row(
             children: [
               const Icon(Icons.map, size: 14, color: Colors.white70),
@@ -421,7 +500,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
               Expanded(child: Text(roll['address'], style: const TextStyle(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis)),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Row(
             children: [
               const Icon(Icons.location_searching, size: 14, color: Colors.white54),
@@ -429,16 +508,34 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
               Text(roll['location'], style: const TextStyle(fontSize: 11, color: Colors.white54)),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Row(
             children: [
-              const Icon(Icons.height, size: 14, color: Colors.white54),
-              const SizedBox(width: 6),
-              Text("Alt: ${roll['alt']}", style: const TextStyle(fontSize: 11, color: Colors.white54)),
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.cloud, size: 14, color: Colors.lightBlue),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(roll['weather'] ?? "N/A", style: const TextStyle(fontSize: 11, color: Colors.white54), overflow: TextOverflow.ellipsis)),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.height, size: 14, color: Colors.white54),
+                    const SizedBox(width: 6),
+                    Text("Alt: ${roll['alt']}", style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                  ],
+                ),
+              ),
             ],
           ),
           const Spacer(),
+
+          // Footer: Voice Memo Recorder
           Container(
+            margin: const EdgeInsets.only(top: 8),
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: Colors.black38,
@@ -470,11 +567,11 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
                   onTap: () => _toggleRecording(index),
                   child: CircleAvatar(
                     backgroundColor: isRec ? Colors.red : Colors.white12,
-                    radius: 16,
+                    radius: 14,
                     child: Icon(
                       isRec ? Icons.stop : (hasAudio ? Icons.play_arrow : Icons.mic),
                       color: isRec ? Colors.white : Colors.deepOrange,
-                      size: 16,
+                      size: 14,
                     ),
                   ),
                 ),
