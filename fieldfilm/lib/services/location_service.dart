@@ -9,6 +9,32 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class LocationService {
   static Future<Map<String, String>> getEnvironmentData() async {
     try {
+      bool serviceEnabled;
+      LocationPermission permission;
+
+      // Check if location services are enabled
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception("Location services are disabled. Please turn on GPS.");
+      }
+
+      // Check location permissions
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        // Ask for permission
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          // Denied
+          throw Exception("Location permissions are denied by user.");
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        // User denied permissions permanently, we cannot request permissions.
+        throw Exception("Location permissions are permanently denied. Please enable them in app settings.");
+      }
+
+      // Functions
       Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
 
@@ -89,7 +115,7 @@ class LocationService {
       };
     } catch (e) {
       print("[LocationService] Hardware error: $e");
-      throw Exception("Failed to get location. Please check GPS permissions.");
+      throw Exception(e.toString().replaceAll('Exception: ', ''));
     }
   }
 }
