@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -16,13 +17,14 @@ class FieldFilmHomePage extends StatefulWidget {
 }
 
 class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
-  // --- State Management ---
   List<Map<String, dynamic>> _rolls = [];
   bool _isCapturing = false;
   bool _isLoadingData = true;
+  String? _playingAudioPath;
 
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
+  final AudioPlayer _audioPlayer = AudioPlayer();
   final DatabaseService _dbService = DatabaseService(); 
   
   final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
@@ -36,20 +38,27 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     'Fujifilm Provia 100F'
   ];
 
-  // --- Lifecycle ---
   @override
   void initState() {
     super.initState();
     _loadData();
+    
+    _audioPlayer.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _playingAudioPath = null;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _audioRecorder.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
-  // --- Utility ---
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -68,9 +77,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // --- Core Logic ---
-
-  // Initializes local state with remote database records.
   Future<void> _loadData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -82,13 +88,11 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         _isLoadingData = false;
       });
     } catch (e) {
-      print("[Database] Fetch error: $e");
       _showErrorDialog("Data Sync Error", "Failed to load logs: $e");
       setState(() => _isLoadingData = false);
     }
   }
 
-  // Captures environment context and generates a new roll entry.
   Future<void> _createNewRoll() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -113,24 +117,19 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         'isRecording': false,
       };
 
-      // Update local state
       _rolls.insert(0, newRoll);
       _listKey.currentState?.insertItem(0, duration: const Duration(milliseconds: 500));
       setState(() => _isCapturing = false);
       
-      // Persist to database
       await _dbService.createRoll(rollId, newRoll);
-      print("[RollCreation] Success: $rollId");
 
     } catch (e) {
-      print("[RollCreation] Sensor error: $e");
       _showErrorDialog("Sensor Error", e.toString());
       setState(() => _isCapturing = false);
     }
   }
 
-  // Handles confirmation and cascading deletion of a roll.
-  Future<void> _confirmDeleteRoll(int index) async {
+  Future<void> _confirmDeleteRoll(Map<String, dynamic> roll) async {
     bool confirm = await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -152,70 +151,127 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     ) ?? false;
 
     if (confirm) {
-      String rollId = _rolls[index]['id'];
-      final removedRoll = _rolls[index];
-      
-      _rolls.removeAt(index);
+      final idx = _rolls.indexOf(roll);
+      if (idx == -1) return;
+
+      if (_playingAudioPath != null && _playingAudioPath == roll['audioPath']) {
+        await _audioPlayer.stop();
+        setState(() => _playingAudioPath = null);
+      }
+      if (roll['isRecording'] == true) {
+        await _audioRecorder.stop();
+      }
+
+      _rolls.removeAt(idx);
       _listKey.currentState?.removeItem(
-        index,
-        (context, animation) => _buildAnimatedItem(context, removedRoll, index, animation),
+        idx,
+        (context, animation) => _buildAnimatedItem(context, roll, animation),
         duration: const Duration(milliseconds: 300),
       );
 
-      _dbService.deleteRoll(rollId);
+      _dbService.deleteRoll(roll['id']);
     }
   }
 
-  // Media update handlers
-  Future<void> _setRollCover(int index) async {
+  Future<void> _setRollCover(Map<String, dynamic> roll) async {
     final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
     if (photo != null) {
-      setState(() => _rolls[index]['coverPath'] = photo.path);
-      _dbService.updateRollField(_rolls[index]['id'], 'coverPath', photo.path);
-    }
-  }
-
-  void _updateFilmType(int index, String? newType) {
-    if (newType != null) {
-      setState(() => _rolls[index]['filmType'] = newType);
-      _dbService.updateRollField(_rolls[index]['id'], 'filmType', newType);
-    }
-  }
-
-  Future<void> _toggleRecording(int index) async {
-    final roll = _rolls[index];
-
-    if (roll['isRecording']) {
-      final path = await _audioRecorder.stop();
-      setState(() {
-        _rolls[index]['isRecording'] = false;
-        _rolls[index]['audioPath'] = path;
-      });
-      _dbService.updateRollField(roll['id'], 'audioPath', path);
-    } else {
-      if (await _audioRecorder.hasPermission()) {
-        final dir = await getApplicationDocumentsDirectory();
-        final path = '${dir.path}/memo_${roll['id']}.m4a';
-        await _audioRecorder.start(const RecordConfig(), path: path);
-        setState(() => _rolls[index]['isRecording'] = true);
-      } else {
-        print("[AudioRecorder] Permission denied.");
+      final idx = _rolls.indexOf(roll);
+      if (idx != -1) {
+        setState(() => _rolls[idx]['coverPath'] = photo.path);
+        _dbService.updateRollField(roll['id'], 'coverPath', photo.path);
       }
     }
   }
 
-  void _deleteAudio(int index) {
-    setState(() {
-      _rolls[index]['audioPath'] = null;
-      _rolls[index]['isRecording'] = false;
-    });
-    _dbService.updateRollField(_rolls[index]['id'], 'audioPath', null);
+  void _updateFilmType(Map<String, dynamic> roll, String? newType) {
+    if (newType != null) {
+      final idx = _rolls.indexOf(roll);
+      if (idx != -1) {
+        setState(() => _rolls[idx]['filmType'] = newType);
+        _dbService.updateRollField(roll['id'], 'filmType', newType);
+      }
+    }
   }
 
-  // --- UI ---
+  Future<void> _toggleRecording(Map<String, dynamic> roll) async {
+    final idx = _rolls.indexOf(roll);
+    if (idx == -1) return;
+
+    bool isRec = roll['isRecording'] == true;
+    bool hasAudio = roll['audioPath'] != null && roll['audioPath'].toString().isNotEmpty;
+    bool isPlaying = _playingAudioPath != null && _playingAudioPath == roll['audioPath'];
+
+    if (isRec) {
+      final path = await _audioRecorder.stop();
+      setState(() {
+        _rolls[idx]['isRecording'] = false;
+        _rolls[idx]['audioPath'] = path;
+      });
+      if (path != null) {
+        _dbService.updateRollField(roll['id'], 'audioPath', path);
+      }
+    } else if (hasAudio) {
+      if (isPlaying) {
+        await _audioPlayer.stop();
+        setState(() => _playingAudioPath = null);
+      } else {
+        await _audioPlayer.stop();
+        if (await _audioRecorder.isRecording()) {
+          await _audioRecorder.stop();
+          for (int i = 0; i < _rolls.length; i++) {
+            if (_rolls[i]['isRecording'] == true) {
+              setState(() => _rolls[i]['isRecording'] = false);
+            }
+          }
+        }
+        await _audioPlayer.play(DeviceFileSource(roll['audioPath']));
+        setState(() => _playingAudioPath = roll['audioPath']);
+      }
+    } else {
+      if (await _audioRecorder.hasPermission()) {
+        if (await _audioRecorder.isRecording()) {
+          await _audioRecorder.stop();
+          for (int i = 0; i < _rolls.length; i++) {
+            if (_rolls[i]['isRecording'] == true) {
+              setState(() => _rolls[i]['isRecording'] = false);
+            }
+          }
+        }
+        await _audioPlayer.stop();
+        setState(() => _playingAudioPath = null);
+
+        final dir = await getApplicationDocumentsDirectory();
+        final path = '${dir.path}/memo_${roll['id']}.m4a';
+        await _audioRecorder.start(const RecordConfig(), path: path);
+        setState(() => _rolls[idx]['isRecording'] = true);
+      } else {
+        _showErrorDialog("Permission Required", "Please grant microphone access in settings to record memos.");
+      }
+    }
+  }
+
+  Future<void> _deleteAudio(Map<String, dynamic> roll) async {
+    final idx = _rolls.indexOf(roll);
+    if (idx == -1) return;
+
+    if (_playingAudioPath != null && _playingAudioPath == roll['audioPath']) {
+      await _audioPlayer.stop();
+      setState(() => _playingAudioPath = null);
+    }
+    if (roll['isRecording'] == true) {
+      await _audioRecorder.stop();
+    }
+    
+    setState(() {
+      _rolls[idx]['audioPath'] = null;
+      _rolls[idx]['isRecording'] = false;
+    });
+    _dbService.updateRollField(roll['id'], 'audioPath', null);
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Initial loading state
     if (_isLoadingData) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator(color: Colors.deepOrange)),
@@ -223,7 +279,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     }
 
     return Scaffold(
-      // Global navigation
       appBar: AppBar(
         title: const Text('FieldFilm', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
@@ -235,17 +290,15 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
           )
         ],
       ),
-      // Main list feed
       body: _rolls.isEmpty
           ? const Center(child: Text("Tap capture to log your first frame", style: TextStyle(color: Colors.white54)))
           : AnimatedList(
               key: _listKey,
               initialItemCount: _rolls.length,
               itemBuilder: (context, index, animation) {
-                return _buildAnimatedItem(context, _rolls[index], index, animation);
+                return _buildAnimatedItem(context, _rolls[index], animation);
               },
             ),
-      // Action footer
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12.0),
@@ -272,10 +325,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // --- UI Sub-components ---
-
-  // Wrapper for individual roll entries
-  Widget _buildAnimatedItem(BuildContext context, Map<String, dynamic> roll, int index, Animation<double> animation) {
+  Widget _buildAnimatedItem(BuildContext context, Map<String, dynamic> roll, Animation<double> animation) {
     return SizeTransition(
       sizeFactor: animation,
       child: FadeTransition(
@@ -288,13 +338,12 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
             children: [
               _buildSprocketRow(),
               Expanded(
-                // Horizontal scrolling container
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   physics: const BouncingScrollPhysics(),
                   children: [
-                    _buildCoverPage(roll, index),
-                    _buildMetadataPage(roll, index, context),
+                    _buildCoverPage(roll),
+                    _buildMetadataPage(roll, context),
                   ],
                 ),
               ),
@@ -306,7 +355,6 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // Decorative film perforations
   Widget _buildSprocketRow() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
@@ -324,8 +372,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // Left panel: Photo and film stock
-  Widget _buildCoverPage(Map<String, dynamic> roll, int index) {
+  Widget _buildCoverPage(Map<String, dynamic> roll) {
     bool imgExists = roll['coverPath'] != null && File(roll['coverPath']).existsSync();
 
     return Container(
@@ -340,7 +387,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
         children: [
           Expanded(
             child: GestureDetector(
-              onTap: () => _setRollCover(index),
+              onTap: () => _setRollCover(roll),
               child: Container(
                 width: double.infinity,
                 decoration: const BoxDecoration(
@@ -392,7 +439,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
                     ),
                   );
                 }).toList(),
-                onChanged: (newValue) => _updateFilmType(index, newValue),
+                onChanged: (newValue) => _updateFilmType(roll, newValue),
               ),
             ),
           ),
@@ -401,10 +448,10 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
     );
   }
 
-  // Right panel: Context and audio memo
-  Widget _buildMetadataPage(Map<String, dynamic> roll, int index, BuildContext context) {
-    bool isRec = roll['isRecording'];
-    bool hasAudio = roll['audioPath'] != null && File(roll['audioPath']).existsSync();
+  Widget _buildMetadataPage(Map<String, dynamic> roll, BuildContext context) {
+    bool isRec = roll['isRecording'] == true;
+    bool hasAudio = roll['audioPath'] != null && roll['audioPath'].toString().isNotEmpty;
+    bool isPlaying = _playingAudioPath != null && _playingAudioPath == roll['audioPath'];
 
     return Container(
       width: MediaQuery.of(context).size.width * 0.75, 
@@ -427,7 +474,7 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
                 width: 20,
                 child: IconButton(
                   icon: const Icon(Icons.delete_outline, color: Colors.white54, size: 16),
-                  onPressed: () => _confirmDeleteRoll(index),
+                  onPressed: () => _confirmDeleteRoll(roll),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                 ),
@@ -475,8 +522,9 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
           ),
           const Spacer(),
           Container(
+            height: 52,
             margin: const EdgeInsets.only(top: 8),
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.black38,
               borderRadius: BorderRadius.circular(8),
@@ -486,32 +534,34 @@ class _FieldFilmHomePageState extends State<FieldFilmHomePage> {
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text("Voice Memo", style: TextStyle(color: Colors.white.withOpacity(0.9), fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(height: 2),
                       Text(
-                        isRec ? "Listening..." : (hasAudio ? "Audio saved" : "Tap to record"),
-                        style: TextStyle(color: isRec ? Colors.redAccent : Colors.white54, fontSize: 10)
+                        isRec ? "Listening..." : (isPlaying ? "Playing..." : (hasAudio ? "Audio saved" : "Tap to record")),
+                        style: TextStyle(color: (isRec || isPlaying) ? Colors.redAccent : Colors.white54, fontSize: 10)
                       ),
                     ],
                   ),
                 ),
                 if (hasAudio && !isRec)
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white54, size: 16),
-                    onPressed: () => _deleteAudio(index),
-                    padding: const EdgeInsets.only(right: 8),
-                    constraints: const BoxConstraints(),
+                  GestureDetector(
+                    onTap: () => _deleteAudio(roll),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Icon(Icons.close, color: Colors.white54, size: 18),
+                    ),
                   ),
                 GestureDetector(
-                  onTap: () => _toggleRecording(index),
+                  onTap: () => _toggleRecording(roll),
                   child: CircleAvatar(
-                    backgroundColor: isRec ? Colors.red : Colors.white12,
-                    radius: 14,
+                    backgroundColor: (isRec || isPlaying) ? Colors.red : Colors.white12,
+                    radius: 16,
                     child: Icon(
-                      isRec ? Icons.stop : (hasAudio ? Icons.play_arrow : Icons.mic),
-                      color: isRec ? Colors.white : Colors.deepOrange,
-                      size: 14,
+                      isRec ? Icons.stop : (isPlaying ? Icons.pause : (hasAudio ? Icons.play_arrow : Icons.mic)),
+                      color: (isRec || isPlaying) ? Colors.white : Colors.deepOrange,
+                      size: 16,
                     ),
                   ),
                 ),
