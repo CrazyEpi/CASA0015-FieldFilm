@@ -1,44 +1,84 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class LocationService {
-  
-  // Collects GPS coordinates, street address, and weather info.
   static Future<Map<String, String>> getEnvironmentData() async {
     try {
-      // --- Physical Location ---
       Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
 
-      // --- Reverse Geocoding ---
       String addressStr = "Unknown Area";
+      
+      // Query location
       try {
         List<Placemark> placemarks = await placemarkFromCoordinates(
             position.latitude, position.longitude);
         if (placemarks.isNotEmpty) {
-          Placemark place = placemarks.first;
-          addressStr = '${place.locality ?? "City"}, ${place.subLocality ?? "Area"}';
+          String city = placemarks.first.locality ?? "";
+          String area = placemarks.first.subLocality ?? "";
+          
+          if (city.isNotEmpty && area.isNotEmpty) {
+            addressStr = '$city, $area';
+          } else if (city.isNotEmpty) {
+            addressStr = city;
+          } else if (area.isNotEmpty) {
+            addressStr = area;
+          }
         }
       } catch (e) {
-        print("[LocationService] Geocoding error: $e");
+        print("[LocationService] Native geocoding error: $e");
       }
 
-      // --- Weather API Integration ---
-      String weatherInfo = "Weather unavailable";
+      String weatherInfo = "";
       try {
         final apiKey = dotenv.env['WEATHER_API_KEY'];
-        final url = 'https://api.openweathermap.org/data/2.5/weather?lat=${position.latitude}&lon=${position.longitude}&appid=$apiKey&units=metric';
-        final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
-        
-        if (res.statusCode == 200) {
-          final weatherData = jsonDecode(res.body);
-          weatherInfo = '${weatherData['weather'][0]['main']}, ${weatherData['main']['temp']}°C';
+        if (apiKey == null || apiKey.isEmpty) {
+          weatherInfo = "Missing API Key";
+          print("[LocationService] Weather fetch failed: $weatherInfo");
+        } else {
+          final url = 'https://api.openweathermap.org/data/2.5/weather?lat=${position.latitude}&lon=${position.longitude}&appid=$apiKey&units=metric';
+          final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+          
+          if (res.statusCode == 200) {
+            final weatherData = jsonDecode(res.body);
+            weatherInfo = '${weatherData['weather'][0]['main']}, ${weatherData['main']['temp']}°C';
+            
+            // If address query failed, use city name from weather API
+            if (addressStr == "Unknown Area") {
+              String apiCity = weatherData['name'] ?? "";
+              if (apiCity.isNotEmpty) {
+                addressStr = apiCity;
+                print("[LocationService] Fallback to OpenWeather city: $apiCity");
+              }
+            }
+            
+          } else {
+            if (res.statusCode == 401) {
+              weatherInfo = "API Key Invalid";
+            } else if (res.statusCode == 404) {
+              weatherInfo = "Location Not Found";
+            } else if (res.statusCode == 429) {
+              weatherInfo = "API Rate Limit Exceeded";
+            } else {
+              weatherInfo = "Unknown: ${res.statusCode}";
+            }
+            print("[LocationService] Weather fetch failed: HTTP ${res.statusCode} - $weatherInfo");
+          }
         }
+      } on TimeoutException catch (e) {
+        weatherInfo = "Connection Timeout";
+        print("[LocationService] Weather connection timeout: $e");
+      } on SocketException catch (e) {
+        weatherInfo = "No Internet Connection";
+        print("[LocationService] Weather socket exception (No Internet): $e");
       } catch (e) {
-        print("[LocationService] Weather API error: $e");
+        weatherInfo = "Unknown Error: ${e.toString().split('\n')[0]}";
+        print("[LocationService] Weather unknown error: $e");
       }
 
       return {
@@ -47,10 +87,9 @@ class LocationService {
         'alt': '${position.altitude.toStringAsFixed(1)}m',
         'weather': weatherInfo,
       };
-      
     } catch (e) {
       print("[LocationService] Hardware error: $e");
-      throw Exception("GPS error. Check device permissions.");
+      throw Exception("Failed to get location. Please check GPS permissions.");
     }
   }
 }
