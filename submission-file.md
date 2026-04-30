@@ -8,7 +8,7 @@ date: "30 Apr 2026"
 
 -->
 
-# Submission Guide
+# Submission Page
 
 ## Link to GitHub Repository
 
