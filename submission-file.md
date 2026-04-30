@@ -2,45 +2,33 @@
 
 ---
 title: "CASA0017: Web Architecture Final Assessment"
-author: "Steven Gray"
-date: "10 Dec 2021"
+author: "HaoyuHu"
+date: "30 Apr 2026"
 ---
 
 -->
 
 # Submission Guide
 
-You will need to edit this file, create a PDF using the instructions below, from this file.   Sign it digitally and upload to Moodle
-
-## How to create a PDF from Markdown
-When finished you should export to PDF using VSCode and MarkdownPDF Extension. Make sure you select no headers and no footers in the
-extension preferences before exporting to PDF.   
-
-Upload this PDF into Moodle for submission including a copy of your presentation slides.
-
 ## Link to GitHub Repository
 
-Flutter Application Name - MY APPLICATION NAME
-GitHub Repository - [https://github.com/ucl-casa-ce/casa0015-mobile-assessment](https://github.com/ucl-casa-ce/casa0015-mobile-assessment)
+FieldFilm - A digital environment log app for analog photographers
+GitHub Repository - https://github.com/CrazyEpi/CASA0015-FieldFilm
 
 ## Introduction to Application
 
-A brief 200 word explanation of your application and it's use.  Below create a Bibliography to code, tutorial, or plugins you've used in the project. Use this guide
-for citation - [https://www.scribbr.co.uk/referencing/harvard-website-reference/](https://www.scribbr.co.uk/referencing/harvard-website-reference/)
+FieldFilm is a smart digital application designed for film photographers. When shooting with analog cameras, photographers often lose important details like location, weather, and camera settings because film cannot save digital metadata (EXIF). Writing these details down in a physical notebook is slow and difficult, especially in cold outdoor environments.
 
-## Biblography
+FieldFilm solves this problem with a simple, one-tap solution. With just one click, the app uses your phone's sensors to instantly log your precise GPS coordinates, altitude, and real-time weather conditions. It also features a hands-free voice memo tool, allowing you to easily record your camera settings (like shutter speed and aperture) without taking your eyes off the viewfinder.
 
-1. Last name, First initial. (Year published). Title. Edition. (Only include the edition if it is not the first edition) City published: Publisher, Page(s). <http://google.com>
-
-2. Last name, First initial. (Year published). Title. Edition. (Only include the edition if it is not the first edition) City published: Publisher, Page(s).  <http://google.com>
+The app is built with a darkroom-inspired interface that is easy to read outdoors and simple to use, even when wearing gloves. All your records are securely backed up to the cloud, ensuring you never lose your shooting data. FieldFilm successfully bridges the gap between traditional film photography and modern IoT technology.
 
 ----
 
 ## Declaration of Authorship
 
-We, AUTHORS NAME HERE, confirm that the work presented in this assessment is my own. Where information has been derived from other sources, I confirm that this has been indicated in the work.
+I, Haoyu Hu, confirm that the work presented in this assessment is my own. Where information has been derived from other sources, I confirm that this has been indicated in the work.
 
 
-Digitally Sign with Your name Here
-
-ASSESSMENT DATE
+Haoyu Hu
+30 Apr 2026
