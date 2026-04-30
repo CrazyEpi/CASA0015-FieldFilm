@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FieldFilm - The Digital Companion for Analog Photographers</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0A0A0A;
+            --bg-surface: #1C1C1C;
+            --bg-surface-light: #252525;
+            --primary: #FF5722; 
+            --text-main: #FFFFFF;
+            --text-muted: #AAAAAA;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            line-height: 1.6;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Navigation */
+        nav {
+            padding: 30px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            color: var(--primary);
+        }
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .my-logo {
+            height: 36px;
+            width: auto;
+            border-radius: 4px;
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 80px 0;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 900;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+        .hero p {
+            font-size: 20px;
+            color: var(--text-muted);
+            max-width: 600px;
+            margin: 0 auto 40px;
+        }
+        .btn {
+            display: inline-block;
+            background-color: var(--primary);
+            color: var(--text-main);
+            padding: 15px 32px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(255, 87, 34, 0.3);
+        }
+
+        /* The Problem Section */
+        .problem-section {
+            background-color: var(--bg-surface);
+            padding: 80px 0;
+            margin: 60px 0;
+            border-radius: 24px;
+        }
+        .problem-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        .problem-content h2 {
+            font-size: 36px;
+            margin-bottom: 20px;
+            color: var(--primary);
+        }
+        .problem-content p {
+            max-width: 700px;
+            color: var(--text-muted);
+            font-size: 18px;
+        }
+
+        /* Features Carousel Section */
+        .carousel-section {
+            padding: 60px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+        }
+        .carousel-btn {
+            background-color: transparent;
+            color: var(--primary);
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+        .carousel-btn:hover {
+            background-color: var(--primary);
+            color: var(--text-main);
+            box-shadow: 0 0 15px rgba(255, 87, 34, 0.5);
+            transform: scale(1.1);
+        }
+        
+        .carousel-track {
+            width: 100%;
+            max-width: 600px;
+            position: relative;
+            min-height: 250px; 
+        }
+        
+        .feature-card {
+            background-color: var(--bg-surface-light);
+            padding: 50px 40px;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.05);
+            text-align: center;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.4s ease, visibility 0.4s ease;
+        }
+        .feature-card.active {
+            opacity: 1;
+            visibility: visible;
+            position: relative; 
+            animation: slideUpFade 0.5s ease;
+        }
+
+        @keyframes slideUpFade {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .feature-card h3 {
+            font-size: 26px;
+            margin-bottom: 16px;
+            color: var(--primary);
+        }
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 16px;
+            line-height: 1.8;
+        }
+
+        /* Demo Video Section */
+        .demo-section {
+            text-align: center;
+            padding: 80px 0;
+        }
+        .demo-section h2 {
+            font-size: 36px;
+            margin-bottom: 40px;
+        }
+        
+        .video-wrapper {
+            max-width: 320px; 
+            margin: 0 auto;
+            background-color: var(--bg-surface);
+            padding: 15px;
+            border-radius: 24px;
+            border: 2px solid rgba(255, 87, 34, 0.3);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+        }
+        
+        .video-wrapper video {
+            width: 100%;
+            height: auto;
+            border-radius: 12px;
+            /* 防止视频拉伸，保持原始比例 */
+            object-fit: contain; 
+            display: block;
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--bg-surface);
+            padding: 40px 0;
+            text-align: center;
+            color: var(--text-muted);
+            margin-top: 60px;
+        }
+        footer a { color: var(--primary); text-decoration: none; }
+
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 40px; }
+            .problem-section { padding: 40px 20px; border-radius: 0;}
+            .carousel-section { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- Navigation -->
+        <nav>
+            <div class="logo">FieldFilm</div>
+            <div class="nav-right">
+                <img src="assets/logo.png" alt="My Logo" class="my-logo">
+                <a href="https://github.com/CrazyEpi/CASA0015-FieldFilm" target="_blank" class="btn" style="padding: 8px 16px; font-size: 14px; background: transparent; border: 1px solid var(--primary);">View on GitHub</a>
+            </div>
+        </nav>
+
+        <!-- Hero Section -->
+        <section class="hero">
+            <h1>Connecting Analog Moments <br>to Digital Precision.</h1>
+            <p>FieldFilm is the ultimate IoT companion app for film photographers. Log your location, weather, altitude, and voice memos with a single tap. Never lose the context of your analog shots again.</p>
+            <a href="#demo" class="btn">See It In Action</a>
+        </section>
+
+        <!-- Problem Statement -->
+        <section class="problem-section">
+            <div class="problem-content">
+                <h2>The Analog Dilemma</h2>
+                <p>Digital cameras save EXIF data (location, time, settings) automatically. But when shooting on chemical film, photographers are forced to carry bulky notebooks, slowing down their creative workflow. Without accurate real-time environmental data like temperature and altitude, it's impossible to learn from past mistakes during the film development process.</p>
+            </div>
+        </section>
+
+        <!-- Features Carousel -->
+        <section class="carousel-section">
+            <button class="carousel-btn prev-btn" onclick="moveSlide(-1)">&#10094;</button>
+            
+            <div class="carousel-track">
+                <div class="feature-card active">
+                    <h3>1-Tap Context Sensing</h3>
+                    <p>Instantly pulls precise GPS coordinates, gets your current location, and fetches real-time OpenWeather data including temperature and conditions.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Voice Memos</h3>
+                    <p>Keep your eyes on the viewfinder. Record audio memos to capture your thoughts, lighting conditions, and exposure settings hands-free.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Darkroom Aesthetic UI</h3>
+                    <p>A beautifully crafted interface featuring film inspired designs, fluid horizontal swiping, and based in dark mode optimized for outdoor visibility.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Serverless Cloud Sync</h3>
+                    <p>Powered by Firebase Authentication and Cloud Firestore. Your logs are securely backed up in the cloud and accessible across all your devices.</p>
+                </div>
+            </div>
+
+            <button class="carousel-btn next-btn" onclick="moveSlide(1)">&#10095;</button>
+        </section>
+
+        <!-- Demo Video Section -->
+        <section id="demo" class="demo-section">
+            <h2>Experience FieldFilm</h2>
+            <p style="color: var(--text-muted); margin-bottom: 30px;">Watch our showcase to see how FieldFilm seamlessly integrates into a photographer's workflow.</p>
+            
+            <div class="video-wrapper">
+                <video src="assets/demo.mp4" controls loop poster="assets/video_poster.jpg"></video>
+            </div>
+        </section>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>Developed for <strong>CASA0015 Mobile Systems and Interactions</strong></p>
+            <p>Built with Flutter & Firebase. Designed by <a href="https://github.com/CrazyEpi/CASA0015-FieldFilm">Haoyu Hu</a>.</p>
+        </div>
+    </footer>
+
+    <!-- JavaScript for Carousel -->
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.feature-card');
+
+        function moveSlide(direction) {
+            slides[currentSlide].classList.remove('active');
+            currentSlide = (currentSlide + direction + slides.length) % slides.length;
+            slides[currentSlide].classList.add('active');
+        }
+    </script>
+</body>
+</html>
